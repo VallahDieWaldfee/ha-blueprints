@@ -891,7 +891,9 @@ variables:
       {% endif %}
     {% endfor %}
     {{ ns.device_names }}
-
+    
+# Nur für Trigger-Templates: filtert den Notification-Action-Event bereits im
+# Trigger, damit nicht jede Notification-Action jeder Instanz einen Lauf startet
 trigger_variables:
   window_sensor_tv: !input window_sensor
 
