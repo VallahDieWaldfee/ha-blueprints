@@ -1388,6 +1388,8 @@ actions:
                     {{ state_attr(cover_entity, 'current_position') is not none
                        and state_attr(cover_entity, 'current_position') | int(101) < solar_heating_min_position }}
                 sequence:
+                  # Helfer zuerst setzen: verhindert, dass ein manuelles Wieder-Runterfahren
+                  # im selben Zeitraum sofort erneut aufgedrängt wird (kein Ping-Pong)
                   - action: input_boolean.turn_on
                     target:
                       entity_id: "{{ solar_heating_status_helper }}"
@@ -1396,6 +1398,8 @@ actions:
                       entity_id: !input cover
                     data:
                       position: !input solar_heating_position
+              # Sonnenheizen beenden: nur Status zurücksetzen, kein erzwungenes Schließen —
+              # der Rollladen bleibt offen, bis Nachtmodus/Fenster-Interaktion ihn regulär bewegen
               - conditions:
                   - "{{ is_state(solar_heating_status_helper, 'on') }}"
                   - >-
@@ -1471,12 +1475,16 @@ actions:
           - repeat:
               for_each: "{{ device_name_map }}"
               sequence:
+                # Ein einzelnes umbenanntes/entferntes Gerät darf den Versand an
+                # die übrigen Geräte nicht abbrechen
                 - action: "notify.{{ repeat.item }}"
                   continue_on_error: true
                   data:
                     title: "{{ title_text }}"
                     message: "{{ message_text }}"
                     data:
+                      # Gleicher Tag pro Fenster: "gekippt" ersetzt eine ältere
+                      # "offen"-Meldung, und das Schließen räumt sie wieder ab
                       tag: "{{ notification_tag }}"
                       actions:
                         - action: "{{ action_id }}"
@@ -1516,6 +1524,11 @@ actions:
           - variables:
               night_mode_on: "{{ night_mode_boolean is string and night_mode_boolean != '' and is_state(night_mode_boolean, 'on') }}"
               reclose_scene: "scene.reclose_{{ cover_entity | slugify }}"
+          # Ausgangsposition nur beim Übergang aus "geschlossen" sichern — sonst
+          # überschreibt Kippen→Öffnen den Snapshot mit der Kipp-Position. Nach
+          # unavailable/unknown nur sichern, wenn noch KEIN Snapshot existiert:
+          # nach einem HA-Neustart fehlt er (Szene weg), aber bei einem Sensor-Blip
+          # am offenen Fenster würde er sonst mit der Offen-Position überschrieben
           - if:
               - >-
                 {{ trigger.from_state is not none
@@ -1542,17 +1555,22 @@ actions:
                   - "{{ trigger.to_state.state in ['on', 'open'] }}"
                   - "{{ not treat_open_as_tilted }}"
                   - "{{ not night_mode_on }}"
+                  # Bei aktiver erzwungener Beschattung bleibt der Rollladen unten
                   - "{{ not (force_shading and shading_status_helper is string and shading_status_helper != '' and is_state(shading_status_helper, 'on')) }}"
                 sequence:
                   - action: cover.open_cover
                     target:
                       entity_id: !input cover
+                  # Beschattungs-Status freigeben: Das Öffnen fürs Lüften ist kein
+                  # manueller Eingriff — nach dem Schließen (oder Timeout) darf der
+                  # nächste Tick wieder beschatten, statt bis Tagesende zu pausieren
                   - if:
                       - "{{ shading_status_helper is string and shading_status_helper != '' and is_state(shading_status_helper, 'on') }}"
                     then:
                       - action: input_boolean.turn_off
                         target:
                           entity_id: "{{ shading_status_helper }}"
+              # Nachts nur bis zur Lüftungsposition öffnen statt komplett
               - conditions:
                   - "{{ trigger.to_state.state in ['on', 'open'] }}"
                   - "{{ not treat_open_as_tilted }}"
@@ -1575,6 +1593,8 @@ actions:
             timeout:
               minutes: !input reclose_timeout
             continue_on_timeout: true
+          # Zustand NACH dem Warten neu bewerten — währenddessen können Nachtmodus
+          # oder Sturm aktiv geworden sein, dann darf der Snapshot nicht zurückgeholt werden
           - variables:
               night_mode_on_now: "{{ night_mode_boolean is string and night_mode_boolean != '' and is_state(night_mode_boolean, 'on') }}"
               pause_now: >-
@@ -1598,6 +1618,7 @@ actions:
             then:
               - if:
                   - "{{ force_close }}"
+                  # Während der Pause wird auch nach Timeout nichts bewegt
                   - "{{ not pause_now }}"
                 then:
                   - action: cover.close_cover
@@ -1605,6 +1626,7 @@ actions:
                       entity_id: !input cover
             else:
               - choose:
+                  # Fenster zu + Nachtmodus inzwischen aktiv → schließen statt restaurieren
                   - conditions:
                       - "{{ night_mode_on_now }}"
                       - "{{ not pause_now }}"
@@ -1612,6 +1634,12 @@ actions:
                       - action: cover.close_cover
                         target:
                           entity_id: !input cover
+                  # Normalfall: Ausgangsposition wiederherstellen (nur wenn der
+                  # Snapshot existiert, kein Sturm aktiv ist und keine Pause läuft).
+                  # Existenz via expand
+                  # prüfen — der State einer Szene ist ihr letzter Aktivierungs-
+                  # Zeitstempel und steht bei nie aktivierten Szenen dauerhaft auf
+                  # 'unknown'; ein State-Check würde den ersten Restore für immer blockieren
                   - conditions:
                       - "{{ not storm_now }}"
                       - "{{ not pause_now }}"
@@ -1620,6 +1648,9 @@ actions:
                       - action: scene.turn_on
                         target:
                           entity_id: "{{ reclose_scene }}"
+                      # Restore ist eine Fremdbewegung: Beschattungs-Status freigeben,
+                      # damit der nächste Tick bei Bedarf frisch beschattet, statt die
+                      # Abweichung als manuellen Eingriff bis Tagesende zu sperren
                       - if:
                           - "{{ shading_status_helper is string and shading_status_helper != '' and is_state(shading_status_helper, 'on') }}"
                         then:
