@@ -933,6 +933,9 @@ triggers:
     for:
       seconds: 2
     id: window_closed
+  # Beide Richtungen, gleiche ID: Welcher Übergang die Pause beendet, hängt von
+  # der gewählten Logik ab — das Gate am Aktions-Anfang sortiert den jeweils
+  # anderen (Pause-Beginn) aus, weil die Pause dann gerade aktiv ist
   - trigger: state
     entity_id: !input pause_boolean
     from: "on"
@@ -983,6 +986,9 @@ triggers:
     enabled: !input mosquito_enabled
 
 actions:
+  # Pausier-Helfer: hält die AUTOMATIK an, mit drei Ausnahmen — Sturmschutz
+  # (Hardware-Schutz geht vor), Benachrichtigungs-Aufräumen (bewegt nichts) und
+  # der Notification-Knopf (ein bewusster Nutzer-Befehl, wie der Wandtaster)
   - condition: >-
       {{ trigger.id | default('') in ['storm_detected', 'window_closed', 'close_shutter_action']
          or not pause_active }}
