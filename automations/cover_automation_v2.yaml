@@ -1027,6 +1027,8 @@ actions:
                   - action: cover.open_cover
                     target:
                       entity_id: !input cover
+          # Morgens-Öffnen ist für die Beschattung eine Fremdbewegung: Status freigeben,
+          # damit ein heißer Sommermorgen direkt wieder frisch beschattet werden kann
           - if:
               - "{{ shading_status_helper is string and shading_status_helper != '' and is_state(shading_status_helper, 'on') }}"
             then:
@@ -1039,12 +1041,16 @@ actions:
           - condition: trigger
             id: night_close
         sequence:
+          # Beschattungs-Status zurücksetzen: Die Nacht beendet die Beschattung,
+          # sonst springt der Rollladen morgens beim ersten Tick auf die End-Position
           - if:
               - "{{ shading_status_helper is string and shading_status_helper != '' and is_state(shading_status_helper, 'on') }}"
             then:
               - action: input_boolean.turn_off
                 target:
                   entity_id: "{{ shading_status_helper }}"
+          # Sonnenheizen-Status ebenfalls zurücksetzen, damit die nächste Aktivierung
+          # (nächster sonniger kalter Morgen) nicht durch einen Alt-Zustand blockiert wird
           - if:
               - "{{ solar_heating_status_helper is string and solar_heating_status_helper != '' and is_state(solar_heating_status_helper, 'on') }}"
             then:
@@ -1079,6 +1085,9 @@ actions:
             id: storm_detected
           - "{{ force_storm_action or states(window_sensor) in ['off', 'closed'] }}"
         sequence:
+          # Beschattungs-Status zurücksetzen: Die Sturm-Bewegung darf nicht als
+          # manueller Eingriff gewertet werden — sobald der Wind nachlässt, soll
+          # der nächste Tick wieder frisch beschatten können
           - if:
               - "{{ shading_status_helper is string and shading_status_helper != '' and is_state(shading_status_helper, 'on') }}"
             then:
@@ -1100,6 +1109,9 @@ actions:
       - conditions:
           - condition: trigger
             id: pause_ended
+          # Nur nachholen, wenn VOR diesem Helfer-Wechsel wirklich pausiert war:
+          # Bei mehreren Helfern feuert der Trigger auch bei Wechseln, die die
+          # (nie aktive) Pause gar nicht beendet haben — dann darf hier nichts passieren
           - >-
             {% set helpers = [pause_boolean] if pause_boolean is string else pause_boolean %}
             {% set pausing = 'on' if pause_mode == 'on_pauses' else 'off' %}
@@ -1110,12 +1122,17 @@ actions:
             {% endfor %}
             {{ ns.all }}
         sequence:
+          # Beschattungs-Status freigeben: Während der Pause ist der Sollwert
+          # weitergewandert — ohne Freigabe würde der erste Tick die Abweichung
+          # als manuellen Eingriff werten und bis Tagesende nicht mehr beschatten
           - if:
               - "{{ shading_status_helper is string and shading_status_helper != '' and is_state(shading_status_helper, 'on') }}"
             then:
               - action: input_boolean.turn_off
                 target:
                   entity_id: "{{ shading_status_helper }}"
+          # Verpassten Nachtmodus nachholen — "nachts offen" wäre der schlimmste
+          # während der Pause verpasste Zustand. Sturm hat weiterhin Vorrang.
           - variables:
               wind_now: >-
                 {% if storm_wind_sensor is string and storm_wind_sensor != '' %}
@@ -1156,6 +1173,9 @@ actions:
           - condition: trigger
             id: shading_tick
         sequence:
+          # Fehlkonfiguration laut machen: Blueprints kennen keine bedingten
+          # Pflichtfelder — ohne diesen Hinweis bliebe ein aktivierter Sonnenschutz
+          # ohne Status-Helfer einfach still wirkungslos
           - if:
               - "{{ shading_status_helper is not string or shading_status_helper == '' }}"
             then:
@@ -1195,6 +1215,9 @@ actions:
                   0
                 {% endif %}
               storm_ok: "{{ not storm_enabled or (wind_now | float(0)) < wind_speed_threshold }}"
+              # Ist die Temperaturquelle gerade verfügbar? Ein kurzer unavailable-Blip
+              # (Integrations-Reload, Funk-Aussetzer) darf eine laufende Beschattung
+              # nicht beenden — unavailable heißt "Zustand halten", nicht "abbrechen"
               temp_available: >-
                 {% if shading_temp_sensor is string and shading_temp_sensor != '' %}
                   {{ has_value(shading_temp_sensor) }}
@@ -1203,7 +1226,10 @@ actions:
                 {% else %}
                   false
                 {% endif %}
-
+              # Wetterlagen-Filter: ohne Auswahl (leer) immer erlaubt (Altverhalten,
+              # rein auf Sonnenstand/Temperatur basierend); ohne gesetzte Wetter-Entität
+              # oder bei unavailable/unknown ebenfalls erlaubt (Filter kann nicht
+              # ausgewertet werden und soll die Beschattung dann nicht lahmlegen)
               # Sensor-Konfiguration & Verfügbarkeit
               has_lux_config: "{{ shading_illuminance_sensor is string and shading_illuminance_sensor != '' }}"
               lux_available: "{{ has_lux_config and has_value(shading_illuminance_sensor) }}"
@@ -1221,7 +1247,6 @@ actions:
                   true
                 {% endif %}
 
-              # Wetter-Prüfung: Falls konfiguriert, muss Wetter verfügbar sein UND in der erlaubten Liste
               weather_cond_ok: >-
                 {% if has_weather_config %}
                   {{ weather_available and weather_now in shading_weather_states }}
@@ -1229,7 +1254,6 @@ actions:
                   true
                 {% endif %}
 
-              # Kombinierter Filter (ODER-Logik mit Fallback-Schutz):
               weather_ok: >-
                 {% if has_lux_config and has_weather_config %}
                   {{ lux_ok or weather_cond_ok }}
@@ -1374,6 +1398,8 @@ actions:
                 {% else %}
                   99
                 {% endif %}
+              # Ein unavailable-Blip der Temperaturquelle darf die Einmal-Semantik
+              # nicht brechen (sonst: Helfer-Reset -> erneutes Aufdrängen nach Blip)
               temp_available: >-
                 {% if shading_temp_sensor is string and shading_temp_sensor != '' %}
                   {{ has_value(shading_temp_sensor) }}
@@ -1393,6 +1419,9 @@ actions:
                 {% endif %}
               storm_ok: "{{ not storm_enabled or (wind_now | float(0)) < wind_speed_threshold }}"
           - choose:
+              # Sonnenheizen starten: heruntergelassenen Rollladen öffnen.
+              # Der Sturmschutz hat immer Vorrang: bei Starkwind wird nicht geöffnet
+              # (im Panzer-Modus wäre das direkt kontraproduktiv)
               - conditions:
                   - "{{ not is_state(solar_heating_status_helper, 'on') }}"
                   - "{{ sun_in_window and outdoor_temp <= solar_heating_temp_threshold }}"
