@@ -891,7 +891,7 @@ variables:
       {% endif %}
     {% endfor %}
     {{ ns.device_names }}
-    
+
 # Nur für Trigger-Templates: filtert den Notification-Action-Event bereits im
 # Trigger, damit nicht jede Notification-Action jeder Instanz einen Lauf startet
 trigger_variables:
@@ -998,6 +998,8 @@ actions:
           - condition: trigger
             id: morning_open
         sequence:
+          # Sturm hat immer Vorrang: bei Starkwind wird morgens nicht bewegt
+          # (im Panzer-Modus wäre das Öffnen direkt kontraproduktiv)
           - variables:
               wind_now: >-
                 {% if storm_wind_sensor is string and storm_wind_sensor != '' %}
@@ -1018,6 +1020,7 @@ actions:
                       entity_id: !input cover
                     data:
                       position: !input morning_position
+              # Fallback für Cover ohne Positions-Attribut
               - conditions:
                   - "{{ state_attr(cover_entity, 'current_position') is none }}"
                 sequence:
