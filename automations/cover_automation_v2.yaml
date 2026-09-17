@@ -290,7 +290,7 @@ blueprint:
         shading_weather_states:
           name: Wetterlagen für Beschattung (optional)
           description: >
-            Nur relevant, wenn Werte ausgewählt sind. Ist nur die Wetterlage gesetzt, filtert diese die Beschattung. Ist zusätzlich ein Helligkeitssensor gewählt, müssen beide Bedingungen zutreffen (UND-Verknüpfung). Leer lassen, um die Wetterlage zu ignorieren.
+            Nur relevant, wenn Werte ausgewählt sind. Ist nur die Wetterlage gesetzt, filtert diese die Beschattung. Ist zusätzlich ein Helligkeitssensor gewählt, muss nur eine Bedingung zutreffen (ODER-Verknüpfung). Leer lassen, um die Wetterlage zu ignorieren.
           default: []
           selector:
             select:
