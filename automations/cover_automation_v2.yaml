@@ -1240,8 +1240,12 @@ actions:
                 {% else %}
                   true
                 {% endif %}
-
-              # Beenden bei dauerhaft falscher Wetterlage (> 10 Min. nicht in erlaubter Liste)
+              # Beenden nur bei STABIL schlechter Wetterlage (>= 10 Minuten unverändert):
+              # Wetterzustände flattern gern (bewölkt <-> teilweise bewölkt) — ohne diese
+              # Trägheit würde der Rollladen im 5-Minuten-Takt voll auf- und zufahren.
+              # Bewusster Trade-off: Flattert das Wetter zwischen zwei NICHT erlaubten
+              # Lagen (z.B. rainy <-> pouring), bleibt last_changed jung und dieses
+              # Ende greift nicht — dann beenden Sonnenstand/Temperatur die Beschattung
               weather_bad_stable: >-
                 {{ has_weather_config
                    and weather_available
@@ -1263,6 +1267,8 @@ actions:
                   - "{{ force_shading or treat_open_as_tilted or states(window_sensor) not in ['on', 'open'] }}"
                 sequence:
                   - variables:
+                      # Höhe (über dem Boden), auf der ein Sonnenstrahl die Fensterebene
+                      # durchqueren darf, damit er maximal shading_depth tief in den Raum fällt
                       ray_height: >-
                         {{ shading_depth * tan(sun_elevation * pi / 180)
                            / ([cos(az_diff * pi / 180), 0.087] | max) }}
@@ -1286,6 +1292,10 @@ actions:
                   - if:
                       - "{{ is_state(shading_status_helper, 'on') }}"
                     then:
+                      # Beschattung läuft bereits: nur kleine Abweichungen nachführen.
+                      # Große Abweichungen können nicht vom Sonnenstand kommen (der
+                      # wandert pro Tick nur wenige Prozent) — das war ein manueller
+                      # Eingriff und wird bis zum Beschattungs-Ende respektiert.
                       - if:
                           - "{{ deviation >= shading_min_change and deviation <= shading_override_threshold }}"
                         then:
@@ -1295,6 +1305,7 @@ actions:
                             data:
                               position: "{{ target_position }}"
                     else:
+                      # Beschattung beginnt: Anfangsbewegung immer ausführen
                       - action: input_boolean.turn_on
                         target:
                           entity_id: "{{ shading_status_helper }}"
@@ -1352,6 +1363,9 @@ actions:
                 {{ sun_elevation >= shading_min_elevation
                    and az_diff >= (0 - shading_fov_left)
                    and az_diff <= shading_fov_right }}
+              # Fallback +99 (statt -99 wie beim Sonnenschutz): fehlt die
+              # Temperaturquelle, soll die "<= Schwelle"-Prüfung sicher scheitern,
+              # damit Sonnenheizen ohne Datenquelle einfach aus bleibt statt zu spinnen
               outdoor_temp: >-
                 {% if shading_temp_sensor is string and shading_temp_sensor != '' %}
                   {{ states(shading_temp_sensor) | float(99) }}
