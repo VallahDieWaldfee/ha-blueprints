@@ -264,7 +264,7 @@ blueprint:
           description: >
             Ab dieser Beleuchtungsstärke (Lux) wird beschattet. Nur relevant, wenn
             ein Helligkeitssensor ausgewählt ist. Richtwerte: pralle Sonne
-            30.000–100.000 lx, bedeckter Himmel tagsüber 1.000–10.000 lx.
+            30.000–100.000 lx, bedeckter Himmel tagsüber 1.000–100.000 lx.
           default: 10000
           selector:
             number:
