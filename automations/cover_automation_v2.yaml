@@ -17,6 +17,7 @@ blueprint:
     📖 [Ausführliche Dokumentation & FAQ](https://github.com/TheRealSimon42/ha-blueprints/blob/main/docs/cover_automation_v2.md)
   domain: automation
   author: TheRealSimon42
+  source_url: https://raw.githubusercontent.com/TheRealSimon42/ha-blueprints/main/automations/cover_automation_v2.yaml
   homeassistant:
     min_version: "2024.10.0"
   input:
