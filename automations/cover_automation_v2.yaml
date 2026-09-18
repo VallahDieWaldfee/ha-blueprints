@@ -1,5 +1,5 @@
 blueprint:
-  name: s42 - Intelligente Rollladensteuerung V2 (ein Rollladen pro Automation)
+  name: s42 - Intelligente Rollladensteuerung V4 (ein Rollladen pro Automation)
   description: >
     Steuert einen einzelnen Rollladen anhand "seines" Fensters: morgendliches Öffnen,
     Reaktion auf gekippte/geöffnete Fenster inkl. Rückfahr-Logik, Nachtmodus, Sturmschutz,
@@ -16,10 +16,9 @@ blueprint:
 
     📖 [Ausführliche Dokumentation & FAQ](https://github.com/TheRealSimon42/ha-blueprints/blob/main/docs/cover_automation_v2.md)
   domain: automation
-  author: TheRealSimon42
+  author: Till
   homeassistant:
     min_version: "2024.10.0"
-  source_url: https://raw.githubusercontent.com/TheRealSimon42/ha-blueprints/main/automations/cover_automation_v2.yaml
   input:
     assignment_section:
       name: Zuordnung
@@ -287,6 +286,53 @@ blueprint:
               step: 500
               mode: box
               unit_of_measurement: lx
+        shading_illuminance_delay:
+          name: Bestätigungszeit Helligkeit (optional)
+          description: >
+            Die Helligkeit muss diese Zeit durchgehend im jeweiligen Zustand bleiben,
+            bevor reagiert wird (siehe "Delay gilt für"). 0 = sofort reagieren
+            (bisheriges Verhalten). Nützlich bei stark schwankendem Licht (Wolken,
+            Bäume im Wind). Nur relevant, wenn ein Helligkeitssensor ausgewählt ist.
+            ⚠️ Benötigt zusätzlich einen eigenen Bestätigungs-Helfer (übernächstes
+            Feld), sonst bleibt die Verzögerung wirkungslos.
+          default: 0
+          selector:
+            number:
+              min: 0
+              max: 30
+              step: 1
+              mode: slider
+              unit_of_measurement: Minuten
+        shading_illuminance_delay_mode:
+          name: Delay gilt für
+          description: >
+            Nur relevant, wenn eine Bestätigungszeit > 0 gesetzt ist. Legt fest, ob
+            die Verzögerung beim Start der Beschattung, beim Ende, oder bei beidem
+            angewendet wird.
+          default: both
+          selector:
+            select:
+              mode: list
+              options:
+                - value: both
+                  label: Start und Ende verzögern
+                - value: start_only
+                  label: Nur Start verzögern (Ende sofort)
+                - value: end_only
+                  label: Nur Ende verzögern (Start sofort)
+        shading_illuminance_confirmed_helper:
+          name: Bestätigungs-Helfer für Helligkeit (input_boolean, nur bei Delay > 0 nötig)
+          description: >
+            Nur erforderlich, wenn eine Bestätigungszeit > 0 gesetzt ist: ein eigener
+            input_boolean-Helfer NUR für dieses Fenster (separat von den anderen
+            Status-Helfern), der sich merkt, ob die Helligkeit gerade als "stabil
+            hoch" bestätigt ist. Fehlt der Helfer bei aktivem Delay, erinnert eine
+            dauerhafte Benachrichtigung in Home Assistant daran, und die Verzögerung
+            bleibt bis dahin wirkungslos (Helligkeit wird wie ohne Delay ausgewertet).
+          default: []
+          selector:
+            entity:
+              domain: input_boolean
         shading_weather_states:
           name: Wetterlagen für Beschattung (optional)
           description: >
@@ -856,6 +902,9 @@ variables:
   shading_illuminance_sensor: !input shading_illuminance_sensor
   shading_illuminance_threshold: !input shading_illuminance_threshold
   shading_illuminance_hysteresis: !input shading_illuminance_hysteresis
+  shading_illuminance_delay: !input shading_illuminance_delay
+  shading_illuminance_delay_mode: !input shading_illuminance_delay_mode
+  shading_illuminance_confirmed_helper: !input shading_illuminance_confirmed_helper
   solar_heating_status_helper: !input solar_heating_status_helper
   solar_heating_temp_threshold: !input solar_heating_temp_threshold
   solar_heating_temp_hysteresis: !input solar_heating_temp_hysteresis
@@ -1168,6 +1217,30 @@ actions:
                     target:
                       entity_id: !input cover
 
+      # --- HELLIGKEIT BESTÄTIGT: HOCH ---
+      - conditions:
+          - condition: trigger
+            id: lux_confirmed_high
+        sequence:
+          - if:
+              - "{{ shading_illuminance_confirmed_helper is string and shading_illuminance_confirmed_helper != '' }}"
+            then:
+              - action: input_boolean.turn_on
+                target:
+                  entity_id: "{{ shading_illuminance_confirmed_helper }}"
+
+      # --- HELLIGKEIT BESTÄTIGT: NIEDRIG ---
+      - conditions:
+          - condition: trigger
+            id: lux_confirmed_low
+        sequence:
+          - if:
+              - "{{ shading_illuminance_confirmed_helper is string and shading_illuminance_confirmed_helper != '' }}"
+            then:
+              - action: input_boolean.turn_off
+                target:
+                  entity_id: "{{ shading_illuminance_confirmed_helper }}"
+
       # --- SONNENSCHUTZ ---
       - conditions:
           - condition: trigger
@@ -1190,6 +1263,25 @@ actions:
                     Bitte in der Automation einen Helfer auswählen oder den
                     Sonnenschutz deaktivieren.
               - stop: "Sonnenschutz aktiviert, aber kein Status-Helfer konfiguriert"
+          # Gleicher Hinweis für den optionalen Helligkeits-Delay: kein harter Stopp,
+          # weil die Beschattung ohne den Helfer einfach auf Sofort-Reaktion zurückfällt
+          - if:
+              - >-
+                {{ shading_illuminance_sensor is string and shading_illuminance_sensor != ''
+                   and shading_illuminance_delay | int(0) > 0
+                   and (shading_illuminance_confirmed_helper is not string or shading_illuminance_confirmed_helper == '') }}
+            then:
+              - action: persistent_notification.create
+                data:
+                  notification_id: "rollladen_lux_helfer_fehlt_{{ cover_entity | slugify }}"
+                  title: "Rollladensteuerung: Bestätigungs-Helfer fehlt"
+                  message: >-
+                    Für "{{ state_attr(cover_entity, 'friendly_name') or cover_entity }}"
+                    ist eine Bestätigungszeit für die Helligkeit gesetzt, aber es ist
+                    kein Bestätigungs-Helfer (input_boolean) ausgewählt — die
+                    Verzögerung bleibt dadurch wirkungslos (Helligkeit wird wie ohne
+                    Delay ausgewertet). Bitte in der Automation einen Helfer
+                    auswählen oder die Bestätigungszeit auf 0 setzen.
           - variables:
               sun_elevation: "{{ state_attr('sun.sun', 'elevation') | float(0) }}"
               sun_azimuth: "{{ state_attr('sun.sun', 'azimuth') | float(0) }}"
@@ -1235,14 +1327,30 @@ actions:
               lux_available: "{{ has_lux_config and has_value(shading_illuminance_sensor) }}"
               lux_now: "{{ states(shading_illuminance_sensor) | float(0) if lux_available else 0 }}"
 
+              # Helligkeits-Delay: nur aktiv, wenn Sensor konfiguriert, Delay > 0 UND
+              # ein eigener Bestätigungs-Helfer gesetzt ist. Fehlt der Helfer, wird
+              # (fail-safe) sofort ausgewertet statt den Delay stillschweigend zu erzwingen.
+              has_lux_delay: >-
+                {{ has_lux_config
+                   and shading_illuminance_delay | int(0) > 0
+                   and shading_illuminance_confirmed_helper is string
+                   and shading_illuminance_confirmed_helper != '' }}
+              lux_delay_start: "{{ has_lux_delay and shading_illuminance_delay_mode in ['both', 'start_only'] }}"
+              lux_delay_end: "{{ has_lux_delay and shading_illuminance_delay_mode in ['both', 'end_only'] }}"
+
               has_weather_config: "{{ shading_weather_states | length > 0 and weather_entity is string and weather_entity != '' }}"
               weather_available: "{{ has_weather_config and has_value(weather_entity) }}"
               weather_now: "{{ states(weather_entity) if weather_available else '' }}"
 
               # Lux-Prüfung: Falls konfiguriert, muss Lux verfügbar sein UND >= Schwelle
+              # — bzw., falls Start-Delay aktiv ist, muss der Bestätigungs-Helfer 'on' sein
               lux_ok: >-
                 {% if has_lux_config %}
-                  {{ lux_available and lux_now >= shading_illuminance_threshold }}
+                  {% if lux_delay_start %}
+                    {{ is_state(shading_illuminance_confirmed_helper, 'on') }}
+                  {% else %}
+                    {{ lux_available and lux_now >= shading_illuminance_threshold }}
+                  {% endif %}
                 {% else %}
                   true
                 {% endif %}
@@ -1277,10 +1385,17 @@ actions:
                    and (as_timestamp(now()) - as_timestamp(states[weather_entity].last_changed, 0)) > 600 }}
 
               # Beenden bei zu geringer Helligkeit (unter Schwelle minus Hysterese)
+              # — bzw., falls End-Delay aktiv ist, muss der Bestätigungs-Helfer 'off' sein
               illuminance_bad: >-
-                {{ has_lux_config
-                   and lux_available
-                   and lux_now <= (shading_illuminance_threshold - shading_illuminance_hysteresis) }}
+                {% if has_lux_config %}
+                  {% if lux_delay_end %}
+                    {{ is_state(shading_illuminance_confirmed_helper, 'off') }}
+                  {% else %}
+                    {{ lux_available and lux_now <= (shading_illuminance_threshold - shading_illuminance_hysteresis) }}
+                  {% endif %}
+                {% else %}
+                  false
+                {% endif %}
           - choose:
               # Beschattung starten / der Sonne nachführen
               - conditions:
