@@ -1033,6 +1033,29 @@ triggers:
       seconds: 2
     id: mosquito_lights
     enabled: !input mosquito_enabled
+  - trigger: numeric_state
+    entity_id: !input shading_illuminance_sensor
+    above: !input shading_illuminance_threshold
+    for:
+      minutes: !input shading_illuminance_delay
+    id: lux_confirmed_high
+    enabled: >-
+      {{ shading_illuminance_sensor is string and shading_illuminance_sensor != ''
+         and shading_illuminance_delay | int(0) > 0
+         and shading_illuminance_confirmed_helper is string
+         and shading_illuminance_confirmed_helper != '' }}
+  - trigger: numeric_state
+    entity_id: !input shading_illuminance_sensor
+    below: >-
+      {{ (shading_illuminance_threshold | float) - (shading_illuminance_hysteresis | float) }}
+    for:
+      minutes: !input shading_illuminance_delay
+    id: lux_confirmed_low
+    enabled: >-
+      {{ shading_illuminance_sensor is string and shading_illuminance_sensor != ''
+         and shading_illuminance_delay | int(0) > 0
+         and shading_illuminance_confirmed_helper is string
+         and shading_illuminance_confirmed_helper != '' }}
 
 actions:
   # Pausier-Helfer: hält die AUTOMATIK an, mit drei Ausnahmen — Sturmschutz
