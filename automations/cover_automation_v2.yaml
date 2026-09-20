@@ -1527,7 +1527,6 @@ actions:
               # Beschattung beenden
               - conditions:
                   - "{{ is_state(shading_status_helper, 'on') }}"
-                  
                   - >-
                     {{ (not sun_in_window)
                        or (temp_available and outdoor_temp <= (shading_temp_threshold - shading_temp_hysteresis))
