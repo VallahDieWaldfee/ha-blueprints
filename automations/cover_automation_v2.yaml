@@ -1,5 +1,5 @@
 blueprint:
-  name: s42 - Intelligente Rollladensteuerung V4 (ein Rollladen pro Automation)
+  name: s42 - Intelligente Rollladensteuerung V2 (ein Rollladen pro Automation)
   description: >
     Steuert einen einzelnen Rollladen anhand "seines" Fensters: morgendliches Öffnen,
     Reaktion auf gekippte/geöffnete Fenster inkl. Rückfahr-Logik, Nachtmodus, Sturmschutz,
@@ -16,9 +16,10 @@ blueprint:
 
     📖 [Ausführliche Dokumentation & FAQ](https://github.com/TheRealSimon42/ha-blueprints/blob/main/docs/cover_automation_v2.md)
   domain: automation
-  author: Till
+  author: TheRealSimon42
   homeassistant:
     min_version: "2024.10.0"
+  source_url: https://raw.githubusercontent.com/TheRealSimon42/ha-blueprints/main/automations/cover_automation_v2.yaml
   input:
     assignment_section:
       name: Zuordnung
