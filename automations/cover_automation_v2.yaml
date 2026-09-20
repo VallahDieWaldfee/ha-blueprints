@@ -1459,27 +1459,6 @@ actions:
                   false
                 {% endif %}
           - choose:
-              # Beschattung beenden
-              - conditions:
-                  - "{{ is_state(shading_status_helper, 'on') }}"
-                  
-                  - >-
-                    {{ (not sun_in_window)
-                       or (temp_available and outdoor_temp <= (shading_temp_threshold - shading_temp_hysteresis))
-                       or (
-                         (not has_lux_config or illuminance_bad)
-                         and (not has_weather_config or weather_bad_stable)
-                       ) }}
-                  - "{{ not (night_mode_boolean is string and night_mode_boolean != '' and is_state(night_mode_boolean, 'on')) }}"
-                sequence:
-                  - action: input_boolean.turn_off
-                    target:
-                      entity_id: "{{ shading_status_helper }}"
-                  - action: cover.set_cover_position
-                    target:
-                      entity_id: !input cover
-                    data:
-                      position: !input shading_end_position
               # Beschattung starten / der Sonne nachführen
               - conditions:
                   - "{{ sun_in_window and outdoor_temp >= shading_temp_threshold }}"
@@ -1545,6 +1524,27 @@ actions:
                               entity_id: !input cover
                             data:
                               position: "{{ target_position }}"
+              # Beschattung beenden
+              - conditions:
+                  - "{{ is_state(shading_status_helper, 'on') }}"
+                  
+                  - >-
+                    {{ (not sun_in_window)
+                       or (temp_available and outdoor_temp <= (shading_temp_threshold - shading_temp_hysteresis))
+                       or (
+                         (not has_lux_config or illuminance_bad)
+                         and (not has_weather_config or weather_bad_stable)
+                       ) }}
+                  - "{{ not (night_mode_boolean is string and night_mode_boolean != '' and is_state(night_mode_boolean, 'on')) }}"
+                sequence:
+                  - action: input_boolean.turn_off
+                    target:
+                      entity_id: "{{ shading_status_helper }}"
+                  - action: cover.set_cover_position
+                    target:
+                      entity_id: !input cover
+                    data:
+                      position: !input shading_end_position
 
       # --- SONNENHEIZEN (Winter) ---
       - conditions:
