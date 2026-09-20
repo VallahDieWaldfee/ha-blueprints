@@ -1,5 +1,5 @@
 blueprint:
-  name: s42 - Intelligente Rollladensteuerung V2 (ein Rollladen pro Automation)
+  name: s42 - Intelligente Rollladensteuerung V4 (ein Rollladen pro Automation)
   description: >
     Steuert einen einzelnen Rollladen anhand "seines" Fensters: morgendliches Öffnen,
     Reaktion auf gekippte/geöffnete Fenster inkl. Rückfahr-Logik, Nachtmodus, Sturmschutz,
@@ -16,8 +16,7 @@ blueprint:
 
     📖 [Ausführliche Dokumentation & FAQ](https://github.com/TheRealSimon42/ha-blueprints/blob/main/docs/cover_automation_v2.md)
   domain: automation
-  author: TheRealSimon42
-  source_url: https://raw.githubusercontent.com/TheRealSimon42/ha-blueprints/main/automations/cover_automation_v2.yaml
+  author: Till
   homeassistant:
     min_version: "2024.10.0"
   input:
@@ -946,6 +945,12 @@ variables:
 # Trigger, damit nicht jede Notification-Action jeder Instanz einen Lauf startet
 trigger_variables:
   window_sensor_tv: !input window_sensor
+  shading_illuminance_sensor_tv: !input shading_illuminance_sensor
+  shading_illuminance_delay_tv: !input shading_illuminance_delay
+  shading_illuminance_delay_mode_tv: !input shading_illuminance_delay_mode
+  shading_illuminance_confirmed_helper_tv: !input shading_illuminance_confirmed_helper
+  shading_illuminance_threshold_tv: !input shading_illuminance_threshold
+  shading_illuminance_hysteresis_tv: !input shading_illuminance_hysteresis
 
 triggers:
   - trigger: time
@@ -1041,29 +1046,42 @@ triggers:
       minutes: !input shading_illuminance_delay
     id: lux_confirmed_high
     enabled: >-
-      {{ shading_illuminance_sensor is string and shading_illuminance_sensor != ''
-         and shading_illuminance_delay | int(0) > 0
-         and shading_illuminance_confirmed_helper is string
-         and shading_illuminance_confirmed_helper != '' }}
-  - trigger: numeric_state
-    entity_id: !input shading_illuminance_sensor
-    below: >-
-      {{ (shading_illuminance_threshold | float) - (shading_illuminance_hysteresis | float) }}
+      {{ shading_illuminance_sensor_tv is string
+         and shading_illuminance_sensor_tv != ''
+         and shading_illuminance_delay_tv | int(0) > 0
+         and shading_illuminance_delay_mode_tv in ['both', 'start_only']
+         and shading_illuminance_confirmed_helper_tv is string
+         and shading_illuminance_confirmed_helper_tv != '' }}
+  - trigger: template
+    value_template: >-
+      {% set sensor = shading_illuminance_sensor_tv %}
+      {% set threshold = shading_illuminance_threshold_tv | float(0) %}
+      {% set hysteresis = shading_illuminance_hysteresis_tv | float(0) %}
+      {{ sensor is string
+         and sensor != ''
+         and has_value(sensor)
+         and states(sensor) | float(0) <= threshold - hysteresis }}
     for:
-      minutes: !input shading_illuminance_delay
+      minutes: >-
+        {% if shading_illuminance_delay_mode_tv in ['both', 'end_only'] %}
+          {{ shading_illuminance_delay_tv | int(0) }}
+        {% else %}
+          0
+        {% endif %}
     id: lux_confirmed_low
     enabled: >-
-      {{ shading_illuminance_sensor is string and shading_illuminance_sensor != ''
-         and shading_illuminance_delay | int(0) > 0
-         and shading_illuminance_confirmed_helper is string
-         and shading_illuminance_confirmed_helper != '' }}
+      {{ shading_illuminance_sensor_tv is string
+         and shading_illuminance_sensor_tv != ''
+         and shading_illuminance_delay_tv | int(0) > 0
+         and shading_illuminance_confirmed_helper_tv is string
+         and shading_illuminance_confirmed_helper_tv != '' }}
 
 actions:
   # Pausier-Helfer: hält die AUTOMATIK an, mit drei Ausnahmen — Sturmschutz
   # (Hardware-Schutz geht vor), Benachrichtigungs-Aufräumen (bewegt nichts) und
   # der Notification-Knopf (ein bewusster Nutzer-Befehl, wie der Wandtaster)
   - condition: >-
-      {{ trigger.id | default('') in ['storm_detected', 'window_closed', 'close_shutter_action']
+      {{ trigger.id | default('') in ['storm_detected', 'window_closed', 'close_shutter_action', 'lux_confirmed_high', 'lux_confirmed_low']
          or not pause_active }}
   - choose:
       # --- MORGENS ÖFFNEN ---
@@ -1306,6 +1324,25 @@ actions:
                     Verzögerung bleibt dadurch wirkungslos (Helligkeit wird wie ohne
                     Delay ausgewertet). Bitte in der Automation einen Helfer
                     auswählen oder die Bestätigungszeit auf 0 setzen.
+          # Bei end_only hebt wieder ausreichend hohe Helligkeit eine zuvor
+          # bestätigte Dunkelheit sofort auf — auch während Beschattung aktiv ist.
+          - if:
+              - >-
+                {{ is_state(shading_status_helper, 'on')
+                   and shading_illuminance_delay_mode == 'end_only'
+                   and is_state(shading_illuminance_confirmed_helper, 'off')
+                   and shading_illuminance_delay | int(0) > 0
+                   and shading_illuminance_sensor is string
+                   and shading_illuminance_sensor != ''
+                   and shading_illuminance_confirmed_helper is string
+                   and shading_illuminance_confirmed_helper != ''
+                   and has_value(shading_illuminance_sensor)
+                   and states(shading_illuminance_sensor) | float(0)
+                      >= shading_illuminance_threshold }}
+            then:
+              - action: input_boolean.turn_on
+                target:
+                  entity_id: "{{ shading_illuminance_confirmed_helper }}"
           - variables:
               sun_elevation: "{{ state_attr('sun.sun', 'elevation') | float(0) }}"
               sun_azimuth: "{{ state_attr('sun.sun', 'azimuth') | float(0) }}"
@@ -1421,6 +1458,27 @@ actions:
                   false
                 {% endif %}
           - choose:
+              # Beschattung beenden
+              - conditions:
+                  - "{{ is_state(shading_status_helper, 'on') }}"
+                  
+                  - >-
+                    {{ (not sun_in_window)
+                       or (temp_available and outdoor_temp <= (shading_temp_threshold - shading_temp_hysteresis))
+                       or (
+                         (not has_lux_config or illuminance_bad)
+                         and (not has_weather_config or weather_bad_stable)
+                       ) }}
+                  - "{{ not (night_mode_boolean is string and night_mode_boolean != '' and is_state(night_mode_boolean, 'on')) }}"
+                sequence:
+                  - action: input_boolean.turn_off
+                    target:
+                      entity_id: "{{ shading_status_helper }}"
+                  - action: cover.set_cover_position
+                    target:
+                      entity_id: !input cover
+                    data:
+                      position: !input shading_end_position
               # Beschattung starten / der Sonne nachführen
               - conditions:
                   - "{{ sun_in_window and outdoor_temp >= shading_temp_threshold }}"
@@ -1473,6 +1531,12 @@ actions:
                         target:
                           entity_id: "{{ shading_status_helper }}"
                       - if:
+                          - "{{ lux_delay_end }}"
+                        then:
+                          - action: input_boolean.turn_on
+                            target:
+                              entity_id: "{{ shading_illuminance_confirmed_helper }}"
+                      - if:
                           - "{{ deviation >= shading_min_change }}"
                         then:
                           - action: cover.set_cover_position
@@ -1480,24 +1544,6 @@ actions:
                               entity_id: !input cover
                             data:
                               position: "{{ target_position }}"
-              # Beschattung beenden
-              - conditions:
-                  - "{{ is_state(shading_status_helper, 'on') }}"
-                  - >-
-                    {{ (not sun_in_window)
-                       or (temp_available and outdoor_temp <= (shading_temp_threshold - shading_temp_hysteresis))
-                       or weather_bad_stable
-                       or illuminance_bad }}
-                  - "{{ not (night_mode_boolean is string and night_mode_boolean != '' and is_state(night_mode_boolean, 'on')) }}"
-                sequence:
-                  - action: input_boolean.turn_off
-                    target:
-                      entity_id: "{{ shading_status_helper }}"
-                  - action: cover.set_cover_position
-                    target:
-                      entity_id: !input cover
-                    data:
-                      position: !input shading_end_position
 
       # --- SONNENHEIZEN (Winter) ---
       - conditions:
